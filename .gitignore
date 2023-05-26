@@ -1,0 +1,17 @@
+# .gitignore
+
+# Ignore virtual environment directory
+.venv/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+
+# Ignore .env files
+.env
+
+# Ignore VSCode settings
+.vscode/
+
+# Ignore database file
+database.db
