@@ -20,6 +20,9 @@ from databaseFunctions import (
     checkIfCountryHasController,
     getPrimaryControllerID,
     setPlayerSignUpAttemptsInactive,
+    getCountryNameByID,
+    fetchAvailableCountriesForUser,
+    setGameRecordInactive,
 )
 
 from discordFunctions import dmAreClosed
@@ -94,8 +97,7 @@ class SignupHandler(View):
         )
         insertNewSignUpAttempt(self.connection, self.cursor, interaction.user.id)
 
-        whatIsCountry = """In order to sing up for the game, first select a country you want to play as. \n
-        We highly recommend to select a **minor** nation if you have little to none experience since playing a **major** requires a lot of experience with the game. \n \n"""
+        whatIsCountry = """In order to sing up for the game, first select a country you want to play as. \n\nWe highly recommend to select a **minor** nation if you have little to none experience since playing a **major** requires a lot of experience with the game. \n \n"""
 
         await interaction.user.send(whatIsCountry, view=userView)
         await interaction.response.defer()
@@ -116,10 +118,9 @@ class SignupHandler(View):
             )
             return
 
-        playerSignedCountries = self.cursor.execute(
-            "SELECT record_id, name, controller, option FROM game_records JOIN countries USING(country_id) WHERE game_id = ? AND player_id = ? AND is_active = 1",
-            (self.gameID, interaction.user.id),
-        ).fetchall()
+        playerSignedCountries = fetchAvailableCountriesForUser(
+            self.cursor, self.gameID, interaction.user.id
+        )
         if len(playerSignedCountries) == 0:
             await interaction.response.send_message(
                 "You are not signed up for any country!", ephemeral=True
@@ -136,7 +137,11 @@ class SignupHandler(View):
         await interaction.user.send(
             "Select a country to unsign from!",
             view=UnsignView(
-                self.gameID, self.connection, interaction.user, playerSignedCountries
+                self.gameID,
+                self.connection,
+                self.cursor,
+                interaction.user,
+                playerSignedCountries,
             ),
         )
         await interaction.response.defer()
@@ -350,15 +355,11 @@ class SignupDirectMessage(View):
 
         primaryControllerID = 1
         secondaryControllerID = 2
-        whatIsController = """**Primary Controller** is the player who is responsible for the main parts of the nation management - strategic planning, template designs, research, etc. \n
-    **Secondary Controller (CO-OP)** is the helping player that is reponsible for trading with other countries, micromanaging divisions, or other small tasks. \n
-    **Secondary Controller** is only available for **major** countries. \n
-    If you are new to the game and want to learn, it is recommended to sign up for the **secondary controller**. \n
-    You need to ask the **primary controller** for permission to sign up for the **secondary controller**. \n
-    (The bot handles those requests) \n"""
+        whatIsController = """**Primary Controller** is the player who is responsible for the main parts of the nation management - strategic planning, template designs, research, etc. \n\n**Secondary Controller (CO-OP)** is the helping player that is reponsible for trading with other countries, micromanaging divisions, or other small tasks. \n\n**Secondary Controller** is only available for **major** countries. \n\nIf you are new to the game and want to learn, it is recommended to sign up for the **secondary controller** for a major nation, or primary controller of a minor nation. \n\nYou need to ask the **primary controller** for permission to sign up for the **secondary controller**. \n\n(The bot handles those requests) \n"""
 
         if not isCountryMajor(self.cursor, self.selectedCountry):
             self.controllerType = 1
+            await interaction.user.send(whatIsController)
             await interaction.user.send(
                 "The nation you are signing up is not a major, so you were automatically signed up for the **primary controller.**"
             )
@@ -367,11 +368,10 @@ class SignupDirectMessage(View):
         elif checkIfCountryHasController(
             self.cursor, self.gameID, self.selectedCountry, primaryControllerID
         ):
+            await interaction.user.send(whatIsController)
             await interaction.user.send(
                 "This country already has **primary controller**. In order to sign up for the **secondary controller**, you need confirmation from the primary controller. "
             )
-
-            await interaction.user.send(whatIsController)
 
             primaryControllerTag = getPrimaryControllerID(
                 self.cursor, self.gameID, self.selectedCountry
@@ -407,8 +407,8 @@ class SignupDirectMessage(View):
             await self.processOption(interaction)
         else:
             self.add_item(self.controllerSelect)
-            await interaction.user.send("Select a controller type!", view=self)
             await interaction.user.send(whatIsController)
+            await interaction.user.send("Select a controller type!", view=self)
 
     async def controllerSelectCallback(self, interaction: discord.Interaction) -> None:
         self.controllerType = interaction.data["values"][0]
@@ -418,9 +418,7 @@ class SignupDirectMessage(View):
     async def optionSelectCallback(self, interaction: discord.Interaction) -> None:
         self.option = interaction.data["values"][0]
         await self.updateSelect(self.optionSelect, interaction, self.option)
-        await interaction.user.send(
-            f"Confirming signup for **{self.selectedCountry}** as **{self.controllerType}** for **{self.option}**"
-        )
+        await interaction.user.send(self.generateConfirmationMessage())
         insertGameRecord(
             self.connection,
             self.cursor,
@@ -452,10 +450,7 @@ class SignupDirectMessage(View):
         """A function that processes option selection. If option has been somehow selected without Option SelectMenu, insert new record into database.
         Otherwise, send an option SelectMenu."""
 
-        whatIsOption = """**First Option** is your primary country selection - the country you want to play the most.\n
-        When you sign up for the **first option** you confirm that you are going to fullfill your duties as a controller (**primary** or secondary**) for this country. \n
-        However, if for some reason, you were to be moved to a different country, it is likely you are going to end up playing your **Second Option**.\n
-        You can only have one **first option** and one **second option**. \n"""
+        whatIsOption = """**First Option** is your primary country selection - the country you want to play the most.\n\nWhen you sign up for the **first option** you confirm that you are going to fullfill your duties as a controller (**primary** or **secondary**) for this country. \n\nHowever, if for some reason, you were to be moved to a different country, it is likely you are going to end up playing your **Second Option**.\n\nYou can only have one **first option** and one **second option**. \n"""
 
         await interaction.user.send(whatIsOption)
 
@@ -493,6 +488,24 @@ class SignupDirectMessage(View):
         self.remove_item(select)
         await interaction.response.defer()
 
+    def generateConfirmationMessage(self) -> str:
+        """Generates a confirmation message for the user after signing up."""
+        countryName = getCountryNameByID(self.cursor, self.selectedCountry)
+        controllerType = None
+        option = None
+
+        if int(self.controllerType) == 1:
+            controllerType = "Primary Controller"
+        elif int(self.controllerType) == 2:
+            controllerType = "Secondary Controller"
+
+        if int(self.option) == 1:
+            option = "First Option"
+        elif int(self.option) == 2:
+            option = "Second Option"
+
+        return f"Confirming sign up for **{countryName}** as **{controllerType}** for **{option}**"
+
 
 class SecondaryControllerRequest(View):
     def __init__(self, discordTag, connection):
@@ -529,23 +542,31 @@ class SecondaryControllerRequest(View):
 
 
 class UnsignView(View):
-    def __init__(self, gameID, connection, user, playerSignedCountries):
+    def __init__(
+        self,
+        gameID: str,
+        connection: sqlite3.Cursor,
+        cursor: sqlite3.Cursor,
+        user: discord.user,
+        playerSignedCountries: list,
+    ) -> None:
         super().__init__(timeout=None)
 
         self.gameID = gameID
         self.connection = connection
-        self.cursor = self.connection.cursor()
+        self.cursor = cursor
         self.user = user
 
         options = []
 
         for signedCountry in playerSignedCountries:
-            recordID = signedCountry[0]
+            recordID = signedCountry[2]
             countryName = signedCountry[0]
-            controllerType = signedCountry[1]
-            option = signedCountry[2]
+            emoji = signedCountry[1]
+            controllerType = signedCountry[3]
+            option = signedCountry[4]
 
-            label = f"{countryName} ({controllerType}) - {option}"
+            label = self.generateOptionLabel(countryName, emoji, controllerType, option)
             options.append(SelectOption(label=label, value=recordID))
 
         self.select = Select(
@@ -556,12 +577,8 @@ class UnsignView(View):
         self.select.callback = self.selectCallback
         self.add_item(self.select)
 
-    async def selectCallback(self, interaction: discord.Interaction):
-        self.cursor.execute(
-            "UPDATE game_records SET is_active = 0 WHERE record_id = ?",
-            (self.select.values[0],),
-        )
-        self.connection.commit()
+    async def selectCallback(self, interaction: discord.Interaction) -> None:
+        setGameRecordInactive(self.connection, self.cursor, self.select.values[0])
         await self.user.send("You have been unsigned from the game!")
 
         self.select.disabled = True
@@ -572,6 +589,23 @@ class UnsignView(View):
         await interaction.message.edit(view=self)
         await interaction.response.defer()
         self.stop()
+
+    def generateOptionLabel(
+        self, countryName: str, emoji: str, controllerType: str, option: str
+    ) -> str:
+        """Generates a label for the select menu."""
+
+        if int(controllerType) == 1:
+            controllerType = "Primary Controller"
+        elif int(controllerType) == 2:
+            controllerType = "Secondary Controller"
+
+        if int(option) == 1:
+            option = "First Option"
+        elif int(option) == 2:
+            option = "Second Option"
+
+        return f"{emoji}  {countryName} - {controllerType} - {option}"
 
     def stop(self):
         self.cursor.execute(

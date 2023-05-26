@@ -87,6 +87,18 @@ def setPlayerSignUpAttemptsInactive(
     connection.commit()
 
 
+def setGameRecordInactive(
+    connection: sqlite3.Connection, cursor: sqlite3.Cursor, recordID: str
+):
+    """Sets a game record to inactive. Used to unsign from a country."""
+
+    cursor.execute(
+        "UPDATE game_records SET is_active = 0 WHERE record_id = ?", (recordID,)
+    )
+
+    connection.commit()
+
+
 def checkIfUserAlreadyHasSignUp(cursor: sqlite3.Cursor, userID: str) -> bool:
     """Checks if a user already has an active signup attempt. Used to prevent calling the signup command multiple times.""" ""
 
@@ -175,6 +187,20 @@ def fetchAvailableCountries(cursor: sqlite3.Cursor, gameID: str, userID: str) ->
     return availableCountries
 
 
+def fetchAvailableCountriesForUser(
+    cursor: sqlite3.Cursor, gameID: str, userID: str
+) -> list:
+    """Returns a list of countries available for a given user. List contains country name, emoji, controller type, and option. Used to display available countries to the user when user tries to unsign."""
+
+    cursor.execute(
+        "SELECT countries.name, countries.emoji, game_records.record_id, game_records.controller, game_records.option FROM countries JOIN game_records USING(country_id) WHERE game_records.game_id = ? AND game_records.player_id = ? AND game_records.is_active = 1;",
+        (gameID, userID),
+    )
+
+    signedNationsByPlayer = cursor.fetchall()
+    return signedNationsByPlayer
+
+
 def getFactionID(cursor: sqlite3.Cursor, countryID: str) -> int:
     "Returns faction_id for a given country. Used for historical games."
 
@@ -191,6 +217,16 @@ def getPrimaryControllerID(cursor: sqlite3.Cursor, gameID: str, countryID: str) 
     cursor.execute(
         "SELECT player_id FROM game_records JOIN players USING(player_id) WHERE game_id = ? AND country_id = ? AND controller = 1",
         (gameID, countryID),
+    )
+    return cursor.fetchone()[0]
+
+
+def getCountryNameByID(cursor: sqlite3.Cursor, countryID: str) -> str:
+    "Returns country name for a given country_id."
+
+    cursor.execute(
+        "SELECT name FROM countries WHERE country_id = ?",
+        (countryID,),
     )
     return cursor.fetchone()[0]
 
