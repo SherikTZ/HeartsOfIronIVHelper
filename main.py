@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 
 from config import TOKEN, DATABASE_NAME, SINGUP_CHANNEL
-from dateTimeChecking import validateDate, validateTime
+from dateTimeFunctions import validateDate, validateTime
 from signUpViews import SignupHandler
 
 import sqlite3

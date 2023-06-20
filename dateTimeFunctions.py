@@ -19,11 +19,11 @@ def validateTime(time: str) -> bool:
         return False
 
 
-def formatDate(date: str) -> str:
-    """Formats the date to be in the format YYYY-MM-DD."""
-    return datetime.date.fromisoformat(date).strftime("%Y-%m-%d")
+def calculateTimeUntilGame(gameDateTime: str) -> datetime.timedelta:
+    """Calculates the time until a game starts."""
+    return datetime.datetime.fromisoformat(gameDateTime) - datetime.datetime.now()
 
 
-def formatTime(time: str) -> str:
-    """Formats the time to be in the format HH:MM:SS."""
-    return datetime.time.fromisoformat(time).strftime("%H:%M:%S")
+def getDatetimeAfterTimeDelta(timeDelta: datetime.timedelta) -> datetime.datetime:
+    """Returns the current datetime plus a given timedelta."""
+    return datetime.datetime.now() + timeDelta

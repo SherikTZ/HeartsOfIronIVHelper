@@ -231,6 +231,16 @@ def getCountryNameByID(cursor: sqlite3.Cursor, countryID: str) -> str:
     return cursor.fetchone()[0]
 
 
+def getGameDate(cursor: sqlite3.Cursor, gameID: str) -> str:
+    "Returns game date for a given game_id."
+
+    cursor.execute(
+        "SELECT starting_time FROM games WHERE game_id = ?",
+        (gameID,),
+    )
+    return cursor.fetchone()[0]
+
+
 def isCountryMajor(cursor: sqlite3.Cursor, countryID: str) -> bool:
     "Checks if a country is a major or not."
 

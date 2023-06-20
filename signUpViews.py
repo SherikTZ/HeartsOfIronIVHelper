@@ -23,9 +23,12 @@ from databaseFunctions import (
     getCountryNameByID,
     fetchAvailableCountriesForUser,
     setGameRecordInactive,
+    getGameDate,
 )
 
 from discordFunctions import dmAreClosed
+
+from dateTimeFunctions import calculateTimeUntilGame, getDatetimeAfterTimeDelta
 
 
 class SignupHandler(View):
@@ -270,7 +273,9 @@ class SignupDirectMessage(View):
         user: discord.User,
         bot: commands.Bot,
     ):
-        super().__init__(timeout=None)
+        defaultTimeoutSec = 300
+
+        super().__init__(timeout=defaultTimeoutSec)
         self.gameID = gameID
 
         self.connection = connection
@@ -369,8 +374,24 @@ class SignupDirectMessage(View):
             self.cursor, self.gameID, self.selectedCountry, primaryControllerID
         ):
             await interaction.user.send(whatIsController)
+
+            defaultResponseTimeDays = datetime.timedelta(
+                days=2
+            )  # Constant, subject to change
+            gameTime = getGameDate(self.cursor, self.gameID)
+            timeUntilGame = calculateTimeUntilGame(gameTime)
+
+            if timeUntilGame < defaultResponseTimeDays:
+                timeDifference = defaultResponseTimeDays - timeUntilGame
+                responseDate = gameTime
+                self.timeout = timeDifference.seconds
+            else:
+                timeDifference = defaultResponseTimeDays - timeUntilGame
+                responseDate = getDatetimeAfterTimeDelta(timeDifference)
+                self.timeout = defaultResponseTimeDays.seconds
+
             await interaction.user.send(
-                "This country already has **primary controller**. In order to sign up for the **secondary controller**, you need confirmation from the primary controller. "
+                f"This country already has **primary controller**. In order to sign up for the **secondary controller**, you need confirmation from the **primary controller**.\n\n**Primary controller** has time until **{responseDate}** to give the confirmation."
             )
 
             primaryControllerTag = getPrimaryControllerID(
@@ -379,12 +400,13 @@ class SignupDirectMessage(View):
             primaryController = await self.bot.fetch_user(primaryControllerTag)
 
             secondaryControllerRequest = SecondaryControllerRequest(
-                primaryControllerTag, self.connection
+                primaryControllerTag, self.connection, self.cursor, self.timeout
             )
             await primaryController.send(
-                f"**{self.discordTag}** wants to be the **secondary controller** for **{self.selectedCountry}**. Do you confirm?",
+                f"**{self.discordTag}** wants to be the **secondary controller** for **{getCountryNameByID(self.cursor, self.selectedCountry)}**. Do you confirm? You have time until **{responseDate}** to respond.",
                 view=secondaryControllerRequest,
             )
+
             await secondaryControllerRequest.wait()
 
             if secondaryControllerRequest.result:
@@ -429,6 +451,11 @@ class SignupDirectMessage(View):
             self.option,
         )
         self.stop()
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True
+        await self.user.send("Signup timed out! Please try again.")
 
     async def automaticOptionSelectionMessage(
         self, interaction: discord.Interaction
@@ -508,10 +535,16 @@ class SignupDirectMessage(View):
 
 
 class SecondaryControllerRequest(View):
-    def __init__(self, discordTag, connection):
-        super().__init__(timeout=None)
+    def __init__(
+        self,
+        discordTag: str,
+        connection: sqlite3.Connection,
+        cursor: sqlite3.Cursor,
+        timeoutTime: int,
+    ) -> None:
+        super().__init__(timeout=timeoutTime)
         self.connection = connection
-        self.cursor = self.connection.cursor()
+        self.cursor = cursor
         self.discordTag = discordTag
         self.result = None
 
@@ -527,13 +560,13 @@ class SecondaryControllerRequest(View):
         self.result = True
         self.stop()
         await interaction.response.send_message("Confirmed!", ephemeral=True)
-        self.disableButtons()
+        await self.disableButtons()
 
     async def denyButtonCallback(self, interaction: discord.Interaction):
         self.result = False
         self.stop()
         await interaction.response.send_message("Denied!", ephemeral=True)
-        self.disableButtons()
+        await self.disableButtons()
 
     async def disableButtons(self):
         self.confirmButton.disabled = True
